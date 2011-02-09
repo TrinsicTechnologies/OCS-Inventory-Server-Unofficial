@@ -57,6 +57,7 @@ sub _ipdiscover_prolog_resp{
   
   my ($ua, $os, $v);
  
+  return unless ref($current_context->{'PARAMS'}{'IPDISCOVER'}) eq 'HASH';
   my $lanToDiscover = $current_context->{'PARAMS'}{'IPDISCOVER'}->{'TVALUE'};
   my $behaviour     = $current_context->{'PARAMS'}{'IPDISCOVER'}->{'IVALUE'};
   my $groupsParams  = $current_context->{'PARAMS_G'};
@@ -137,6 +138,7 @@ sub _ipdiscover_main{
   my $DeviceID = $current_context->{'DATABASE_ID'};
   my $dbh = $current_context->{'DBI_HANDLE'};
   my $result = $current_context->{'XML_ENTRY'};
+  return unless ref($current_context->{'PARAMS'}{'IPDISCOVER'}) eq 'HASH';
   my $lanToDiscover = $current_context->{'PARAMS'}{'IPDISCOVER'}->{'TVALUE'};
   my $behaviour     = $current_context->{'PARAMS'}{'IPDISCOVER'}->{'IVALUE'};
   my $groupsParams  = $current_context->{'PARAMS_G'};
@@ -158,7 +160,7 @@ sub _ipdiscover_main{
   # Is the device already have the ipdiscover function ?
   if($lanToDiscover){
     # get 1 on removing and 0 if ok
-    $remove = &_ipdiscover_read_result($dbh, $result, $lanToDiscover);
+    $remove = &_ipdiscover_read_result($dbh, $result, $lanToDiscover, $DeviceID);
     if( $behaviour == IPD_MAN ){
       $remove = 0;
     }
@@ -208,10 +210,12 @@ sub _ipdiscover_main{
 
 sub _ipdiscover_read_result{
 
-  my ($dbh, $result, $subnet) = @_;
+  my ($dbh, $result, $subnet, $DeviceID) = @_;
   my $mask;
   my $update_req;
   my $insert_req;
+  my $reqtag;
+  my $rowtag;
   my $request;
 
   if(exists($result->{CONTENT}->{IPDISCOVER})){
@@ -225,9 +229,16 @@ sub _ipdiscover_read_result{
       }    
     }
     
+    # get TAG
+    &_log(1004,'ipdiscover:hID',$DeviceID) if $ENV{'OCS_OPT_LOGLEVEL'};
+    $reqtag=$dbh->prepare('SELECT TAG FROM accountinfo WHERE HARDWARE_ID=?');
+    $reqtag->execute($DeviceID);
+    $rowtag = $reqtag->fetchrow_hashref;
+    &_log(1004,'ipdiscover:tag',$rowtag->{TAG}) if $ENV{'OCS_OPT_LOGLEVEL'};
+
     # We insert the results (MAC/IP)
-    $update_req = $dbh->prepare('UPDATE netmap SET IP=?,MASK=?,NETID=?,DATE=NULL, NAME=? WHERE MAC=?');
-    $insert_req = $dbh->prepare('INSERT INTO netmap(IP, MAC, MASK, NETID, NAME) VALUES(?,?,?,?,?)');
+    $update_req = $dbh->prepare('UPDATE netmap SET IP=?,MASK=?,NETID=?,DATE=NULL,NAME=?,TAG=?  WHERE MAC=?');
+    $insert_req = $dbh->prepare('INSERT INTO netmap(IP, MAC, MASK, NETID, NAME, TAG) VALUES(?,?,?,?,?,?)');
     
     $base = $result->{CONTENT}->{IPDISCOVER}->{H};
     for(@$base){
@@ -235,9 +246,9 @@ sub _ipdiscover_read_result{
         &_log(1003,'ipdiscover','bad_result') if $ENV{'OCS_OPT_LOGLEVEL'};
         next;
       }
-      $update_req->execute($_->{I}, $mask, $subnet, $_->{N}, $_->{M});
+      $update_req->execute($_->{I}, $mask, $subnet, $_->{N}, $rowtag->{TAG}, $_->{M});
       unless($update_req->rows){
-        $insert_req->execute($_->{I}, $_->{M}, $mask, $subnet, $_->{N});
+        $insert_req->execute($_->{I}, $_->{M}, $mask, $subnet, $_->{N}, $rowtag->{TAG});
       }
     }
     $dbh->commit;
